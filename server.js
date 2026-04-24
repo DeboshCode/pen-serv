@@ -15,24 +15,36 @@ app.use(express.json({ limit: '10mb' }));
 let allDots = [];
 let force252 = false;
 
-// POST-эндпоинт для точек от ручки
-app.post('/api/dot', (req, res) => {
-  const dot = req.body;
-  if (dot && 'x' in dot && 'y' in dot && 'dotType' in dot) {
-    allDots.push(dot);
-    
-    // Рассылаем всем клиентам
-    wss.clients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: 'new_dot', dot }));
-        client.send(JSON.stringify({ type: 'activity_dot' }));
+// POST-эндпоинт для пакета (массива) точек от ручки
+app.post('/api/dots', (req, res) => {
+  const dotsArray = req.body;
+
+  // Проверяем, что пришел именно массив
+  if (Array.isArray(dotsArray)) {
+    let validDotsCount = 0;
+
+    // "Разборщик": дробим буфер и обрабатываем каждую точку
+    dotsArray.forEach(dot => {
+      if (dot && 'x' in dot && 'y' in dot && 'dotType' in dot) {
+        allDots.push(dot);
+        validDotsCount++;
+        
+        // Рассылаем каждую точку всем подключенным клиентам
+        wss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'new_dot', dot }));
+            client.send(JSON.stringify({ type: 'activity_dot' }));
+          }
+        });
       }
     });
     
-    console.log(`Получена точка: x=${dot.x}, y=${dot.y}, type=${dot.dotType}, page=${dot.page}`);
-    res.json({ success: true });
+    console.log(`Получен пакет из ${dotsArray.length} точек. Успешно добавлено: ${validDotsCount}`);
+    res.status(200).json({ success: true, added: validDotsCount });
+    
   } else {
-    res.status(400).json({ error: 'Invalid dot data' });
+    // Если пришел не массив, отдаем ошибку
+    res.status(400).json({ error: 'Invalid data format. Expected an array of dots.' });
   }
 });
 
