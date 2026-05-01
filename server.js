@@ -10,6 +10,44 @@ const wss = new WebSocket.Server({ server });
 // Разрешаем запросы с iOS-приложения
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true })); // для UptimeRobot webhook'ов
+
+// ===== Telegram-уведомления через UptimeRobot webhook =====
+async function sendTelegramAlert(text) {
+  const token  = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    console.warn('Telegram env vars не заданы — пропускаю отправку');
+    return;
+  }
+  try {
+    const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text })
+    });
+    if (!resp.ok) {
+      console.error('Telegram API error:', resp.status, await resp.text());
+    }
+  } catch (e) {
+    console.error('Telegram fetch error:', e.message);
+  }
+}
+
+// Принимает GET или POST от UptimeRobot, поддерживает placeholders в query/body.
+app.all('/uptime-webhook', async (req, res) => {
+  const data    = { ...req.query, ...req.body };
+  const monitor = data.monitor      || 'pen-serv';
+  const status  = (data.status || '').toLowerCase();
+  const details = data.details     || '';
+
+  const emoji = status === 'down' ? '🔴' : status === 'up' ? '🟢' : '⚠️';
+  const text  = `${emoji} ${monitor}: ${status || 'unknown'}\n${details}`.trim();
+
+  console.log('UptimeRobot webhook:', text);
+  await sendTelegramAlert(text);
+  res.status(200).send('ok');
+});
 
 // Хранилище всех точек (для новых подключений)
 let allDots = [];
