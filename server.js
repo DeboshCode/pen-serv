@@ -137,6 +137,15 @@ wss.on('connection', (ws) => {
                       }));
                   }
               });
+          } else if (data.type === 'clear_all') {
+              allDots = [];
+              console.log('allDots очищен по команде из браузера');
+              // Транслируем всем дашбордам, чтобы они тоже очистили холст.
+              wss.clients.forEach(client => {
+                  if (client.readyState === WebSocket.OPEN) {
+                      client.send(JSON.stringify({ type: 'cleared' }));
+                  }
+              });
           }
       } catch (e) {
           console.error('Ошибка парсинга WS-сообщения:', e);
@@ -154,153 +163,172 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live письмо с NeoSmartpen R1</title>
     <style>
-      body { margin: 0; background: #f0f0f0; font-family: system-ui, sans-serif; position: relative; }
-      canvas { display: block; margin: 5px auto; background: white; box-shadow: 0 8px 30px rgba(0,0,0,0.15); border-radius: 8px; }
-      h3 { text-align: center; padding: 1px; color: #333; margin-bottom: 0; }
-      button { display: block; margin: 1px auto; padding: 12px 24px; font-size: 18px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; }
-      button:hover { background: #0056b3; }
-
-      /* Контейнер для индикаторов в правом верхнем углу */
-      #indicators-container {
-        position: fixed;           
-        bottom: 40px;             
-        right: 240px;               
-        display: flex;
-        flex-direction: row;       
-        gap: 14px;
-        z-index: 1000;             
-        pointer-events: none;      
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+      body {
+        background: #f0f0f0;
+        font-family: system-ui, sans-serif;
+        display: grid;
+        grid-template-columns: 200px 1fr 80px;
+        grid-template-rows: auto 1fr auto;
+        grid-template-areas:
+          "header  header  header"
+          "sidebar canvas  pages"
+          "footer  footer  footer";
+        gap: 8px;
+        padding: 8px;
       }
 
-      .indicator {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        transition: all 0.3s ease;
-        position: relative;
+      /* Header */
+      .header {
+        grid-area: header;
         display: flex;
         align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 12px;
-        font-weight: bold;
+        gap: 12px;
+        padding: 4px 12px;
       }
+      .header h3 { margin: 0; color: #333; flex: 1; font-size: 16px; }
+      .header button { padding: 8px 16px; font-size: 14px; border: none; border-radius: 6px; cursor: pointer; color: white; }
+      .header button:hover { filter: brightness(1.1); }
+      #autoPageSwitchBtn { background: #28a745; }
+      #force252Btn       { background: #999999; }
 
-    #controls-container {
-        position: fixed;
-        bottom: 120px;
-        right: 350px;
-        z-index: 1000;
-        display: flex;
-        flex-direction: column;       
-        align-items: center;
-        gap: 1px;
-        pointer-events: none;
-      }
-
-      .page-buttons {
+      /* Sidebar (stats + indicators) */
+      .sidebar {
+        grid-area: sidebar;
         display: flex;
         flex-direction: column;
-        justify-content: flex-end;
-        margin: -30px 0;
-        pointer-events: auto;
+        gap: 10px;
       }
-    
-      .page-buttons button {
-        width: 44px;
-        height: 44px;
-        padding: 0;
-        font-size: 18px;
-        font-weight: bold;
-        background: #444;
-        color: white;
-        border: none;
+      #stats-panel {
+        background: rgba(30, 30, 35, 0.9);
+        color: #e8e8e8;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 12px;
+        padding: 10px 14px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+      }
+      .stats-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
+      .stats-label { color: #a0a0a8; }
+
+      #indicators-container {
+        display: flex;
+        flex-direction: row;
+        gap: 10px;
+        justify-content: center;
+        padding: 8px;
+        background: rgba(255,255,255,0.7);
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      }
+      .indicator {
+        width: 36px; height: 36px;
         border-radius: 50%;
-        cursor: pointer;
-        transition: all 0.2s;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+        transition: all 0.3s ease;
+        position: relative;
+      }
+      .indicator .timer-label {
+        position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
+        background: rgba(0,0,0,0.7); color: white; font-size: 10px;
+        padding: 1px 5px; border-radius: 6px; opacity: 0;
+        transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
+      }
+      .indicator.active .timer-label { opacity: 1; }
+      #ws-indicator     { background-color: red; }
+      #health-indicator { background-color: red; }
+      #dot-indicator    { background-color: #aaa; }
+
+      /* Canvas — занимает всю центральную область */
+      canvas {
+        grid-area: canvas;
+        background: white;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+        border-radius: 8px;
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      /* Page buttons (правая колонка) */
+      .page-buttons {
+        grid-area: pages;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+        padding: 4px;
+      }
+      .page-buttons button {
+        width: 44px; height: 44px;
+        padding: 0; font-size: 16px; font-weight: bold;
+        background: #444; color: white;
+        border: none; border-radius: 50%;
+        cursor: pointer; transition: all 0.2s;
         box-shadow: 0 3px 10px rgba(0,0,0,0.2);
       }
-    
-      .page-buttons button:hover {
-        
-        transform: translateY(-2px);
-        box-shadow: 0 6px 15px rgba(0,123,255,0.6);
-     }
-    
-     .page-buttons button.active {
-        box-shadow: 0 0 0 4px rgba(0,123,255,0.8);
-     }
-     .page-buttons button.written {
-        background: #00aa7b;
-     }
+      .page-buttons button:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(0,123,255,0.5); }
+      .page-buttons button.active { box-shadow: 0 0 0 3px rgba(0,123,255,0.8); }
+      .page-buttons button.written { background: #00aa7b; }
+      .page-buttons .clear-btn { background: #c0392b !important; margin-top: 8px; }
 
-      /* Разные размеры */
-      #ws-indicator { 
-        width: 40px; height: 40px; 
-        background-color: red;
-      }
-      #health-indicator { background-color: red; }
-      #dot-indicator { background-color: #aaa; }
-
-      /* Таймер сверху круга */
-      .timer-label {
-        position: absolute;
-        top: -20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0,0,0,0.7);
-        color: white;
-        font-size: 11px;
-        padding: 2px 6px;
+      /* Footer (статус ручки) */
+      .footer {
+        grid-area: footer;
+        display: flex; align-items: center;
+        padding: 6px 12px;
+        background: rgba(255,255,255,0.7);
         border-radius: 8px;
-        opacity: 0;
-        transition: opacity 0.3s;
-        pointer-events: none;
+        font-size: 13px; color: #555;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
       }
+      #penStatus { font-weight: 600; }
+      #penStatus.connected { color: #28a745; }
 
-      .indicator.active .timer-label {
-        opacity: 1;
-      }
     </style>
   </head>
   <body>
-    <h3>Письмо в реальном времени с NeoSmartpen R1</h3>
-    <button onclick="switchAutoPageSwitch()" style="background:#28a745">AutoPageSwitch</button>
-    <button onclick="toggleForce252()" id="force252Btn" style="background:#999999; margin: 10px auto; display:block;">
-  Переподключить
-</button>
-    <div id="penStatus" class="status-indicator" style="position: fixed; bottom: 10px; right: 310px; z-index: 1000; display: flex;">Pen: —</div>
+    <div class="header">
+      <h3>NeoSmartpen R1 — live</h3>
+      <button id="autoPageSwitchBtn" onclick="switchAutoPageSwitch()">AutoPageSwitch</button>
+      <button id="force252Btn" onclick="toggleForce252()">Переподключить</button>
+    </div>
 
-    <canvas id="canvas"></canvas>
-    
-    <div id="controls-container">
-  <div class="page-buttons">
-    <button onclick="goToPage(1)">1</button>
-    <button onclick="goToPage(2)">2</button>
-    <button onclick="goToPage(3)">3</button>
-    <button onclick="goToPage(4)">4</button>
-    <button onclick="goToPage(5)">5</button>
-    <button onclick="goToPage(6)">6</button>
-    <button onclick="goToPage(7)">7</button>
-    <button onclick="goToPage(8)">8</button>
-    <button onclick="goToPage(9)">9</button>
-    <button onclick="goToPage(10)">10</button>
-    <button onclick="clearCurrentPage()" style="margin-top:10px; background:red">C</button>
-  </div>
-
-    <div id="indicators-container">
-      <div id="ws-indicator" class="indicator"></div>
-      <div id="health-indicator" class="indicator">
-        <div class="timer-label">60s</div>
+    <div class="sidebar">
+      <div id="stats-panel">
+        <div class="stats-row"><span class="stats-label">Точек</span><span id="stat-total">0</span></div>
+        <div class="stats-row"><span class="stats-label">Точек/сек</span><span id="stat-rate">0.0</span></div>
+        <div class="stats-row"><span class="stats-label">Последняя</span><span id="stat-last">—</span></div>
+        <div class="stats-row"><span class="stats-label">WS uptime</span><span id="stat-wsup">—</span></div>
       </div>
-      <div id="dot-indicator" class="indicator">
-        <div class="timer-label">60s</div>
+      <div id="indicators-container">
+        <div id="ws-indicator"     class="indicator" title="WebSocket"></div>
+        <div id="health-indicator" class="indicator" title="Health-check от ручки"><div class="timer-label">0s</div></div>
+        <div id="dot-indicator"    class="indicator" title="Активность точек"><div class="timer-label">0s</div></div>
       </div>
     </div>
 
-    
-  
+    <canvas id="canvas"></canvas>
+
+    <div class="page-buttons">
+      <button onclick="goToPage(1)">1</button>
+      <button onclick="goToPage(2)">2</button>
+      <button onclick="goToPage(3)">3</button>
+      <button onclick="goToPage(4)">4</button>
+      <button onclick="goToPage(5)">5</button>
+      <button onclick="goToPage(6)">6</button>
+      <button onclick="goToPage(7)">7</button>
+      <button onclick="goToPage(8)">8</button>
+      <button onclick="goToPage(9)">9</button>
+      <button onclick="goToPage(10)">10</button>
+      <button class="clear-btn" onclick="clearAllGlobal()" title="Очистить всё на сервере и на всех дашбордах">C</button>
+    </div>
+
+    <div class="footer">
+      <span id="penStatus">Pen: —</span>
+    </div>
+
     <script>
       const canvas = document.getElementById('canvas');
       const ctx = canvas.getContext('2d');
@@ -371,46 +399,132 @@ app.get('/', (req, res) => {
       let buffer = [];  // Буфер для точек (чтобы избежать асинхронных скачков)
       let lastTime = 0;  // Для проверки порядка
 
-      // WebSocket + основной индикатор (красный/зелёный).
-      // Используем wss:// на HTTPS (иначе mixed-content blocking),
-      // ws:// на HTTP. Порт берём из location, чтобы работало и локально, и на Render.
-      const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsHost  = location.host;  // host уже включает порт если он есть
-      const ws = new WebSocket(wsProto + '//' + wsHost);
-
+      // ===== WebSocket с авто-реконнектом =====
+      // Backoff: 1с → 2с → 3с → ... → 10с (максимум). После успешного коннекта сбрасывается.
+      let ws = null;
       let force252 = false;
-  
-      ws.onopen = () => {
-        console.log('WS подключён');
-        wsIndicator.style.backgroundColor = 'green';
-        ws.send(JSON.stringify({ type: 'request_all_dots' }));
+      let reconnectAttempt = 0;
+      let reconnectTimerId = null;
+
+      function connectWS() {
+        if (reconnectTimerId) { clearTimeout(reconnectTimerId); reconnectTimerId = null; }
+        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost  = location.host;
+        ws = new WebSocket(wsProto + '//' + wsHost);
+        wireWS(ws);
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimerId) return; // уже запланирован
+        reconnectAttempt++;
+        const delay = Math.min(reconnectAttempt, 10) * 1000;
+        console.log('WS reconnect через ' + delay + 'мс (попытка ' + reconnectAttempt + ')');
+        wsIndicator.style.backgroundColor = 'orange';
+        reconnectTimerId = setTimeout(() => {
+          reconnectTimerId = null;
+          connectWS();
+        }, delay);
+      }
+
+      function wireWS(socket) {
+        socket.onopen = () => {
+          console.log('WS подключён');
+          reconnectAttempt = 0;
+          stats.wsConnectedAt = Date.now();
+          wsIndicator.style.backgroundColor = 'green';
+          // Историю не запрашиваем — стартуем с пустого холста, ждём live-точек.
+        };
+        socket.onclose = () => {
+          console.log('WS закрыт');
+          wsIndicator.style.backgroundColor = 'red';
+          scheduleReconnect();
+        };
+        socket.onerror = (e) => {
+          console.log('WS error', e);
+          // onclose вызовется следом, реконнект там
+        };
+        socket.onmessage = onWSMessage;
+      }
+
+      // Безопасный отправщик (для toggleForce252 и др.)
+      function wsSend(obj) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(obj));
+        } else {
+          console.log('WS не открыт — сообщение пропущено', obj);
+        }
+      }
+
+      // ===== Stats =====
+      const stats = {
+        totalDots: 0,
+        recentTimestamps: [], // массив времён последних точек для подсчёта dots/sec
+        lastDotAt: null,
+        wsConnectedAt: null
       };
-  
-      ws.onclose = ws.onerror = () => {
-        console.log('WS отключён');
-        wsIndicator.style.backgroundColor = 'red';
-      };
-  
-      ws.onmessage = (event) => {
+
+      function recordDotForStats() {
+        stats.totalDots++;
+        const now = Date.now();
+        stats.lastDotAt = now;
+        stats.recentTimestamps.push(now);
+        // оставляем только за последние 5 секунд
+        const cutoff = now - 5000;
+        while (stats.recentTimestamps.length > 0 && stats.recentTimestamps[0] < cutoff) {
+          stats.recentTimestamps.shift();
+        }
+      }
+
+      function updateStatsPanel() {
+        const dotsPerSec = (stats.recentTimestamps.length / 5).toFixed(1);
+        const lastSeen = stats.lastDotAt
+          ? Math.floor((Date.now() - stats.lastDotAt) / 1000) + 'с назад'
+          : '—';
+        const wsUp = (ws && ws.readyState === WebSocket.OPEN && stats.wsConnectedAt)
+          ? Math.floor((Date.now() - stats.wsConnectedAt) / 1000) + 'с'
+          : '—';
+        document.getElementById('stat-total').textContent = stats.totalDots;
+        document.getElementById('stat-rate').textContent  = dotsPerSec;
+        document.getElementById('stat-last').textContent  = lastSeen;
+        document.getElementById('stat-wsup').textContent  = wsUp;
+      }
+      setInterval(updateStatsPanel, 500);
+
+      // Кладёт точку в pages[] по её РЕАЛЬНОМУ номеру страницы, а не в currentPageIndex.
+      function storeDotInPages(dot) {
+        const pageIdx = Math.max(1, Math.min(10, dot.page || 1)) - 1;
+        pages[pageIdx].push(dot);
+      }
+      // Помечает кнопку соответствующей страницы как "written".
+      function markPageWritten(pageIdx) {
+        document.querySelectorAll('.page-buttons button').forEach(btn => {
+          if (parseInt(btn.textContent) === pageIdx + 1) btn.classList.add('written');
+        });
+      }
+
+      function onWSMessage(event) {
         const data = JSON.parse(event.data);
         if (data.type === 'all_dots') {
-          data.dots.forEach(processDot);
-          data.dots.forEach(pages[currentPageIndex].push);
-          document.querySelectorAll('.page-buttons button').forEach(btn => {
-        
-            if (parseInt(btn.textContent) === currentPageIndex + 1) {
-                btn.classList.add('written');
-            }
+          // При первом подключении / реконнекте — обновим локальный кеш pages[]
+          // и перерисуем текущую страницу.
+          for (let i = 0; i < pages.length; i++) pages[i] = [];
+          data.dots.forEach(d => {
+            storeDotInPages(d);
+            const pageIdx = Math.max(1, Math.min(10, d.page || 1)) - 1;
+            markPageWritten(pageIdx);
           });
+          // Перерисовываем только точки текущей страницы.
+          clearCanvas();
+          for (const d of pages[currentPageIndex]) processDot(d);
         } else if (data.type === 'new_dot') {
-          processDot(data.dot);
-          pages[currentPageIndex].push(data.dot);
-          document.querySelectorAll('.page-buttons button').forEach(btn => {
-        
-            if (parseInt(btn.textContent) === currentPageIndex + 1) {
-                btn.classList.add('written');
-            }
-          });
+          storeDotInPages(data.dot);
+          const pageIdx = Math.max(1, Math.min(10, data.dot.page || 1)) - 1;
+          markPageWritten(pageIdx);
+          // Рисуем если: либо автопереключение страниц включено (processDot сам переключит),
+          // либо точка пришла на текущую открытую страницу.
+          if (autoPageSwitch || pageIdx === currentPageIndex) {
+            processDot(data.dot);
+          }
         } else if (data.type === 'activity_health') {
           startTimer(healthIndicator, healthTimer, '#007bff', healthTimerId);
           if (data.connectedPen) {
@@ -436,6 +550,7 @@ app.get('/', (req, res) => {
           }
         } else if (data.type === 'activity_dot') {
           startTimer(dotIndicator, dotTimer, 'green', dotTimerId);
+          recordDotForStats();
         } else if (data.type === 'force252_changed') {
             force252 = data.value;
             const btn = document.getElementById('force252Btn');
@@ -443,6 +558,15 @@ app.get('/', (req, res) => {
                 btn.textContent = force252 ? "Запрос отправлен" : "Переподключить";
                 btn.style.background = force252 ? '#6465f3' : '#999999';
             }
+        } else if (data.type === 'cleared') {
+            // Сервер сказал "очистить всё" — стираем локальное состояние и холст.
+            for (let i = 0; i < pages.length; i++) pages[i] = [];
+            buffer = [];
+            document.querySelectorAll('.page-buttons button').forEach(b => b.classList.remove('written'));
+            stats.totalDots = 0;
+            stats.recentTimestamps = [];
+            stats.lastDotAt = null;
+            clearCanvas();
         }
       };
 
@@ -505,38 +629,34 @@ app.get('/', (req, res) => {
         }
   
       function resizeCanvas() {
-        const padding = 10;
-        const cssWidth = window.innerWidth - padding * 2;
-        const cssHeight = window.innerHeight - padding * 2;
-  
+        // Canvas теперь сидит в grid-ячейке, поэтому берём её фактический размер
+        // вместо window.innerWidth/Height.
+        const rect = canvas.getBoundingClientRect();
+        const cssWidth  = Math.max(100, rect.width);
+        const cssHeight = Math.max(100, rect.height);
+
         const dpr = window.devicePixelRatio || 1;
-  
-        canvas.style.width = cssWidth + 'px';
-        canvas.style.height = cssHeight + 'px';
-        canvas.width = cssWidth * dpr;
+
+        canvas.width  = cssWidth * dpr;
         canvas.height = cssHeight * dpr;
-  
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // сброс предыдущего scale
         ctx.scale(dpr, dpr);
-  
+
         const ratio = PAGE_WIDTH_MM / PAGE_HEIGHT_MM;
-  
-        const extra = 0.95;  
-  
-        let drawWidth = cssWidth * extra;
+        const extra = 0.95;
+
+        let drawWidth  = cssWidth  * extra;
         let drawHeight = cssHeight * extra;
-  
-        if (drawWidth / drawHeight > ratio) {
-          drawWidth = drawHeight * ratio;
-        } else {
-          drawHeight = drawWidth / ratio;
-        }
-  
+        if (drawWidth / drawHeight > ratio) drawWidth = drawHeight * ratio;
+        else                                drawHeight = drawWidth / ratio;
+
         scaleX = drawWidth / PAGE_WIDTH_MM;
         scaleY = drawHeight / PAGE_HEIGHT_MM;
-  
-        offsetX =  (cssWidth - drawWidth) / 2;
-        offsetY =  (cssHeight - drawHeight) / 2;
-  
+
+        offsetX = (cssWidth  - drawWidth)  / 2;
+        offsetY = (cssHeight - drawHeight) / 2;
+
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, cssWidth, cssHeight);
         ctx.fillStyle = '#fafafa';
@@ -544,17 +664,19 @@ app.get('/', (req, res) => {
         ctx.strokeStyle = '#cccccc';
         ctx.lineWidth = 1;
         ctx.strokeRect(offsetX, offsetY, drawWidth, drawHeight);
-  
+
         previousX = null;
         previousY = null;
-        allDots.forEach(processDot);
+        // Перерисовываем точки текущей страницы (если переключились/изменили размер).
+        for (const dot of pages[currentPageIndex]) processDot(dot);
       }
 
-      window.onresize = resizeCanvas;
-      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+      // Стартовая инициализация — даём grid'у разложить элементы перед измерением.
+      requestAnimationFrame(resizeCanvas);
     
       function clearCanvas() {
-        allDots = [];
+        // Только перерисовка холста (без удаления данных в pages[]).
         previousX = null;
         previousY = null;
         resizeCanvas();
@@ -598,12 +720,7 @@ app.get('/', (req, res) => {
 
       function toggleForce252() {
         force252 = true;
-        
-        // Отправляем команду серверу
-        ws.send(JSON.stringify({
-            type: 'set_force252',
-            value: force252
-        }));
+        wsSend({ type: 'set_force252', value: force252 });
         
         // Меняем вид кнопки
         const btn = document.getElementById('force252Btn');
@@ -617,16 +734,25 @@ app.get('/', (req, res) => {
         force252 = false;
       }
 
-      function clearCurrentPage() { 
+      function clearCurrentPage() {
+        // Локально очищает только текущую страницу (на сервере данные остаются).
         pages[currentPageIndex] = [];
         clearCanvas();
         document.querySelectorAll('.page-buttons button').forEach(btn => {
-        
-        if (parseInt(btn.textContent) === currentPageIndex + 1) {
+          if (parseInt(btn.textContent) === currentPageIndex + 1) {
             btn.classList.remove('written');
-        }
+          }
         });
       }
+
+      function clearAllGlobal() {
+        // Глобальная очистка: сервер сотрёт allDots и пошлёт всем 'cleared',
+        // обработчик которого почистит локальные структуры и холст.
+        wsSend({ type: 'clear_all' });
+      }
+
+      // Стартуем WebSocket-соединение (с авто-реконнектом внутри).
+      connectWS();
     </script>
   </body>
   </html>
@@ -634,17 +760,12 @@ app.get('/', (req, res) => {
 });
 
 // Обработка запроса всех точек
+// При подключении дашборда отправляем всю накопленную историю,
+// чтобы пользователь видел что было написано до его захода/реконнекта.
+// Очистить историю можно кнопкой "C" — она шлёт 'clear_all' и сервер обнуляет allDots.
 wss.on('connection', (ws) => {
   console.log('Новый зритель подключён');
   ws.send(JSON.stringify({ type: 'all_dots', dots: allDots }));
-
-  ws.on('message', (message) => {
-    const data = JSON.parse(message);
-    if (data.type === 'request_all_dots') {
-      ws.send(JSON.stringify({ type: 'all_dots', dots: allDots }));
-    }
-  });
-  
   ws.on('close', () => console.log('Зритель отключён'));
 });
 
