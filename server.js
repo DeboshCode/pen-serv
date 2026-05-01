@@ -311,6 +311,52 @@ app.get('/', (req, res) => {
       }
       #penStatus { font-weight: 600; }
       #penStatus.connected { color: #28a745; }
+
+      /* ===== Mobile / узкие экраны ===== */
+      @media (max-width: 900px) {
+        html, body { overflow: auto; }
+        body {
+          grid-template-columns: 1fr;
+          grid-template-rows: auto auto auto auto auto;
+          grid-template-areas:
+            "header"
+            "sidebar"
+            "canvas"
+            "pages"
+            "footer";
+          height: auto;
+          min-height: 100vh;
+        }
+        .header { flex-wrap: wrap; }
+        .header h3 { width: 100%; flex: none; font-size: 14px; }
+
+        .sidebar { flex-direction: row; flex-wrap: wrap; }
+        #stats-panel { flex: 1; min-width: 200px; }
+        #indicators-container { flex: 1; min-width: 180px; }
+
+        canvas {
+          aspect-ratio: 70 / 90;
+          height: auto !important;
+          max-height: 75vh;
+        }
+
+        .page-buttons {
+          flex-direction: row;
+          flex-wrap: wrap;
+          gap: 6px;
+          justify-content: center;
+        }
+        .page-buttons button {
+          width: 38px; height: 38px;
+          font-size: 14px;
+        }
+        .page-buttons .clear-current,
+        .page-buttons .clear-all {
+          margin-top: 0;
+          width: auto;
+          padding: 0 12px;
+        }
+      }
     </style>
   </head>
   <body>
