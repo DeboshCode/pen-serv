@@ -146,6 +146,18 @@ wss.on('connection', (ws) => {
                       client.send(JSON.stringify({ type: 'cleared' }));
                   }
               });
+          } else if (data.type === 'clear_page') {
+              const pageNum = parseInt(data.page);
+              if (Number.isFinite(pageNum) && pageNum >= 1 && pageNum <= 10) {
+                  const before = allDots.length;
+                  allDots = allDots.filter(d => (d.page || 1) !== pageNum);
+                  console.log(`Страница ${pageNum} очищена. Удалено точек: ${before - allDots.length}`);
+                  wss.clients.forEach(client => {
+                      if (client.readyState === WebSocket.OPEN) {
+                          client.send(JSON.stringify({ type: 'page_cleared', page: pageNum }));
+                      }
+                  });
+              }
           }
       } catch (e) {
           console.error('Ошибка парсинга WS-сообщения:', e);
@@ -163,13 +175,51 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Live письмо с NeoSmartpen R1</title>
     <style>
+      /* ===== CSS Variables (тема) ===== */
+      :root {
+        --bg-page:      #f0f0f0;
+        --bg-panel:     rgba(255, 255, 255, 0.85);
+        --bg-canvas:    #ffffff;
+        --bg-stats:     rgba(30, 30, 35, 0.92);
+        --fg-primary:   #1a1a1a;
+        --fg-secondary: #555;
+        --fg-stats:     #e8e8e8;
+        --fg-stats-label: #a0a0a8;
+        --thumb-bg:     #fafafa;
+        --thumb-border: #d0d0d0;
+        --thumb-active: rgba(0, 123, 255, 0.8);
+        --thumb-written-border: #00aa7b;
+        --shadow-soft:  0 2px 8px rgba(0, 0, 0, 0.08);
+        --shadow-mid:   0 4px 20px rgba(0, 0, 0, 0.18);
+        --btn-success:  #28a745;
+        --btn-warn:     #d6a40f;
+        --btn-danger:   #c0392b;
+        --btn-neutral:  #777;
+        --btn-info:     #4a90e2;
+      }
+      body.dark {
+        --bg-page:      #14161a;
+        --bg-panel:     rgba(35, 38, 45, 0.85);
+        --bg-canvas:    #fdfdfd;
+        --bg-stats:     rgba(20, 22, 28, 0.95);
+        --fg-primary:   #e8e8e8;
+        --fg-secondary: #aaa;
+        --fg-stats:     #f0f0f0;
+        --fg-stats-label: #888;
+        --thumb-bg:     #fdfdfd;
+        --thumb-border: #2c2f36;
+        --shadow-soft:  0 2px 8px rgba(0, 0, 0, 0.45);
+        --shadow-mid:   0 4px 20px rgba(0, 0, 0, 0.55);
+      }
+
       * { box-sizing: border-box; }
       html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
       body {
-        background: #f0f0f0;
-        font-family: system-ui, sans-serif;
+        background: var(--bg-page);
+        color: var(--fg-primary);
+        font-family: system-ui, -apple-system, sans-serif;
         display: grid;
-        grid-template-columns: 200px 1fr 80px;
+        grid-template-columns: 210px 1fr 110px;
         grid-template-rows: auto 1fr auto;
         grid-template-areas:
           "header  header  header"
@@ -177,23 +227,29 @@ app.get('/', (req, res) => {
           "footer  footer  footer";
         gap: 8px;
         padding: 8px;
+        transition: background 0.3s ease, color 0.3s ease;
       }
 
-      /* Header */
+      /* ===== Header ===== */
       .header {
         grid-area: header;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         padding: 4px 12px;
       }
-      .header h3 { margin: 0; color: #333; flex: 1; font-size: 16px; }
-      .header button { padding: 8px 16px; font-size: 14px; border: none; border-radius: 6px; cursor: pointer; color: white; }
-      .header button:hover { filter: brightness(1.1); }
-      #autoPageSwitchBtn { background: #28a745; }
-      #force252Btn       { background: #999999; }
+      .header h3 { margin: 0; color: var(--fg-primary); flex: 1; font-size: 16px; }
+      .header button {
+        padding: 8px 14px; font-size: 13px; border: none; border-radius: 6px;
+        cursor: pointer; color: white; transition: all 0.2s;
+      }
+      .header button:hover { filter: brightness(1.12); transform: translateY(-1px); }
+      #autoPageSwitchBtn { background: var(--btn-success); }
+      #force252Btn       { background: var(--btn-neutral); }
+      #fullscreenBtn     { background: var(--btn-info); }
+      #themeBtn          { background: var(--btn-neutral); padding: 8px 12px; }
 
-      /* Sidebar (stats + indicators) */
+      /* ===== Sidebar ===== */
       .sidebar {
         grid-area: sidebar;
         display: flex;
@@ -201,37 +257,43 @@ app.get('/', (req, res) => {
         gap: 10px;
       }
       #stats-panel {
-        background: rgba(30, 30, 35, 0.9);
-        color: #e8e8e8;
+        background: var(--bg-stats);
+        color: var(--fg-stats);
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
         font-size: 12px;
         padding: 10px 14px;
         border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+        box-shadow: var(--shadow-mid);
       }
-      .stats-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
-      .stats-label { color: #a0a0a8; }
+      .stats-row { display: flex; justify-content: space-between; gap: 14px; line-height: 1.7; }
+      .stats-label { color: var(--fg-stats-label); }
 
       #indicators-container {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        justify-content: center;
-        padding: 8px;
-        background: rgba(255,255,255,0.7);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        padding: 10px 8px;
+        background: var(--bg-panel);
         border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        box-shadow: var(--shadow-soft);
+      }
+      .indicator-cell {
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+      }
+      .indicator-name {
+        font-size: 10px; color: var(--fg-secondary);
+        text-transform: uppercase; letter-spacing: 0.5px;
       }
       .indicator {
-        width: 36px; height: 36px;
+        width: 32px; height: 32px;
         border-radius: 50%;
         box-shadow: 0 3px 10px rgba(0,0,0,0.15);
-        transition: all 0.3s ease;
+        transition: background-color 0.3s ease, transform 0.2s ease;
         position: relative;
       }
       .indicator .timer-label {
-        position: absolute; top: -18px; left: 50%; transform: translateX(-50%);
-        background: rgba(0,0,0,0.7); color: white; font-size: 10px;
+        position: absolute; top: -16px; left: 50%; transform: translateX(-50%);
+        background: rgba(0,0,0,0.7); color: white; font-size: 9px;
         padding: 1px 5px; border-radius: 6px; opacity: 0;
         transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
       }
@@ -240,52 +302,112 @@ app.get('/', (req, res) => {
       #health-indicator { background-color: red; }
       #dot-indicator    { background-color: #aaa; }
 
-      /* Canvas — занимает всю центральную область */
+      /* Pulse-анимация при активности (стартует когда добавляется .pulse) */
+      @keyframes ind-pulse {
+        0%   { transform: scale(1);   box-shadow: 0 0 0 0   rgba(40,167,69,0.55); }
+        50%  { transform: scale(1.18); box-shadow: 0 0 0 8px rgba(40,167,69,0);    }
+        100% { transform: scale(1);   box-shadow: 0 0 0 0   rgba(40,167,69,0);    }
+      }
+      .indicator.pulse { animation: ind-pulse 0.5s ease-out; }
+
+      /* ===== Canvas ===== */
       canvas {
         grid-area: canvas;
-        background: white;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+        background: var(--bg-canvas);
+        box-shadow: var(--shadow-mid);
         border-radius: 8px;
-        width: 100%;
-        height: 100%;
+        width: 100%; height: 100%;
         display: block;
       }
 
-      /* Page buttons (правая колонка) */
-      .page-buttons {
+      /* ===== Page thumbnails (правая колонка) ===== */
+      .page-thumbs {
         grid-area: pages;
         display: flex;
         flex-direction: column;
         gap: 6px;
-        align-items: center;
+        align-items: stretch;
         padding: 4px;
+        overflow-y: auto;
       }
-      .page-buttons button {
-        width: 44px; height: 44px;
-        padding: 0; font-size: 16px; font-weight: bold;
-        background: #444; color: white;
-        border: none; border-radius: 50%;
-        cursor: pointer; transition: all 0.2s;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+      .page-thumb {
+        position: relative;
+        background: var(--thumb-bg);
+        border: 2px solid var(--thumb-border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s;
+        aspect-ratio: 70 / 90;
+        overflow: hidden;
       }
-      .page-buttons button:hover { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(0,123,255,0.5); }
-      .page-buttons button.active { box-shadow: 0 0 0 3px rgba(0,123,255,0.8); }
-      .page-buttons button.written { background: #00aa7b; }
-      .page-buttons .clear-btn { background: #c0392b !important; margin-top: 8px; }
+      .page-thumb:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,123,255,0.35); }
+      .page-thumb.active { border-color: var(--thumb-active); box-shadow: 0 0 0 1px var(--thumb-active); }
+      .page-thumb.written { border-color: var(--thumb-written-border); }
+      .page-thumb canvas {
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        background: transparent;
+        box-shadow: none; border-radius: 0;
+      }
+      .page-thumb .num-badge {
+        position: absolute; top: 2px; left: 4px;
+        font-size: 10px; font-weight: 700;
+        color: var(--fg-secondary);
+        background: rgba(255,255,255,0.7);
+        padding: 1px 5px; border-radius: 4px;
+      }
+      body.dark .page-thumb .num-badge { background: rgba(0,0,0,0.5); color: #ddd; }
 
-      /* Footer (статус ручки) */
+      /* Кнопки очистки под превью */
+      .clear-buttons { display: flex; gap: 4px; margin-top: 6px; }
+      .clear-buttons button {
+        flex: 1; height: 30px;
+        font-size: 11px; font-weight: 700;
+        border: none; border-radius: 5px;
+        cursor: pointer; color: white;
+        transition: all 0.15s;
+      }
+      .clear-buttons button:hover { filter: brightness(1.1); transform: translateY(-1px); }
+      .clear-current { background: var(--btn-warn); }
+      .clear-all     { background: var(--btn-danger); }
+
+      /* ===== Footer ===== */
       .footer {
         grid-area: footer;
-        display: flex; align-items: center;
+        display: flex; align-items: center; gap: 12px;
         padding: 6px 12px;
-        background: rgba(255,255,255,0.7);
+        background: var(--bg-panel);
         border-radius: 8px;
-        font-size: 13px; color: #555;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        font-size: 13px; color: var(--fg-secondary);
+        box-shadow: var(--shadow-soft);
       }
       #penStatus { font-weight: 600; }
-      #penStatus.connected { color: #28a745; }
+      #penStatus.connected { color: var(--btn-success); }
 
+      /* ===== Полноэкранный режим ===== */
+      body.fullscreen .header,
+      body.fullscreen .sidebar,
+      body.fullscreen .page-thumbs,
+      body.fullscreen .footer { display: none; }
+      body.fullscreen {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr;
+        grid-template-areas: "canvas";
+        padding: 0; gap: 0;
+      }
+      body.fullscreen canvas { border-radius: 0; box-shadow: none; }
+      #exitFsBtn {
+        position: fixed; top: 12px; right: 12px;
+        z-index: 9999;
+        padding: 8px 14px; border: none; border-radius: 6px;
+        background: rgba(0,0,0,0.6); color: white; cursor: pointer;
+        display: none;
+      }
+      body.fullscreen #exitFsBtn { display: block; }
+
+      /* Скроллбар для page-thumbs (мелочь, но приятно в тёмной теме) */
+      .page-thumbs::-webkit-scrollbar { width: 6px; }
+      .page-thumbs::-webkit-scrollbar-thumb { background: var(--thumb-border); border-radius: 3px; }
     </style>
   </head>
   <body>
@@ -293,6 +415,8 @@ app.get('/', (req, res) => {
       <h3>NeoSmartpen R1 — live</h3>
       <button id="autoPageSwitchBtn" onclick="switchAutoPageSwitch()">AutoPageSwitch</button>
       <button id="force252Btn" onclick="toggleForce252()">Переподключить</button>
+      <button id="fullscreenBtn" onclick="toggleFullscreen()" title="Полноэкранный режим">⛶</button>
+      <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему">🌙</button>
     </div>
 
     <div class="sidebar">
@@ -303,31 +427,36 @@ app.get('/', (req, res) => {
         <div class="stats-row"><span class="stats-label">WS uptime</span><span id="stat-wsup">—</span></div>
       </div>
       <div id="indicators-container">
-        <div id="ws-indicator"     class="indicator" title="WebSocket"></div>
-        <div id="health-indicator" class="indicator" title="Health-check от ручки"><div class="timer-label">0s</div></div>
-        <div id="dot-indicator"    class="indicator" title="Активность точек"><div class="timer-label">0s</div></div>
+        <div class="indicator-cell">
+          <div id="ws-indicator" class="indicator" title="WebSocket дашборд ↔ сервер"></div>
+          <div class="indicator-name">WS</div>
+        </div>
+        <div class="indicator-cell">
+          <div id="health-indicator" class="indicator" title="Heartbeat от приложения каждые 5 с"><div class="timer-label">0s</div></div>
+          <div class="indicator-name">Health</div>
+        </div>
+        <div class="indicator-cell">
+          <div id="dot-indicator" class="indicator" title="Точки от ручки"><div class="timer-label">0s</div></div>
+          <div class="indicator-name">Dots</div>
+        </div>
       </div>
     </div>
 
     <canvas id="canvas"></canvas>
 
-    <div class="page-buttons">
-      <button onclick="goToPage(1)">1</button>
-      <button onclick="goToPage(2)">2</button>
-      <button onclick="goToPage(3)">3</button>
-      <button onclick="goToPage(4)">4</button>
-      <button onclick="goToPage(5)">5</button>
-      <button onclick="goToPage(6)">6</button>
-      <button onclick="goToPage(7)">7</button>
-      <button onclick="goToPage(8)">8</button>
-      <button onclick="goToPage(9)">9</button>
-      <button onclick="goToPage(10)">10</button>
-      <button class="clear-btn" onclick="clearAllGlobal()" title="Очистить всё на сервере и на всех дашбордах">C</button>
+    <div class="page-thumbs" id="pageThumbs">
+      <!-- Превью страниц генерируются JS-ом -->
+      <div class="clear-buttons">
+        <button class="clear-current" onclick="clearCurrentPageGlobal()" title="Очистить ТОЛЬКО эту страницу на сервере и всех дашбордах">C₁</button>
+        <button class="clear-all" onclick="clearAllGlobal()" title="Очистить ВСЁ на сервере и всех дашбордах">C</button>
+      </div>
     </div>
 
     <div class="footer">
       <span id="penStatus">Pen: —</span>
     </div>
+
+    <button id="exitFsBtn" onclick="toggleFullscreen()">Выйти из полноэкранного</button>
 
     <script>
       const canvas = document.getElementById('canvas');
@@ -360,9 +489,10 @@ app.get('/', (req, res) => {
           clearInterval(currentTimerId);
         }
 
-        // Активируем индикатор
+        // Активируем индикатор + лёгкая pulse-анимация на каждое событие
         indicator.style.backgroundColor = color;
         indicator.classList.add('active');
+        pulseIndicator(indicator);
         
         let seconds = 0;
         timerLabel.textContent = seconds + 's';
@@ -497,9 +627,8 @@ app.get('/', (req, res) => {
       }
       // Помечает кнопку соответствующей страницы как "written".
       function markPageWritten(pageIdx) {
-        document.querySelectorAll('.page-buttons button').forEach(btn => {
-          if (parseInt(btn.textContent) === pageIdx + 1) btn.classList.add('written');
-        });
+        const thumb = document.querySelector('.page-thumb[data-page="' + pageIdx + '"]');
+        if (thumb) thumb.classList.add('written');
       }
 
       function onWSMessage(event) {
@@ -562,11 +691,22 @@ app.get('/', (req, res) => {
             // Сервер сказал "очистить всё" — стираем локальное состояние и холст.
             for (let i = 0; i < pages.length; i++) pages[i] = [];
             buffer = [];
-            document.querySelectorAll('.page-buttons button').forEach(b => b.classList.remove('written'));
+            document.querySelectorAll('.page-thumb').forEach(t => t.classList.remove('written'));
             stats.totalDots = 0;
             stats.recentTimestamps = [];
             stats.lastDotAt = null;
             clearCanvas();
+            renderAllThumbnails();
+        } else if (data.type === 'page_cleared') {
+            // Сервер очистил конкретную страницу.
+            const idx = (data.page || 1) - 1;
+            if (idx >= 0 && idx < pages.length) {
+              pages[idx] = [];
+              const thumb = document.querySelector('.page-thumb[data-page="' + idx + '"]');
+              if (thumb) thumb.classList.remove('written');
+              if (idx === currentPageIndex) clearCanvas();
+              renderThumbnail(idx);
+            }
         }
       };
 
@@ -685,17 +825,10 @@ app.get('/', (req, res) => {
       function goToPage(pageNumber) {
         currentPageIndex = pageNumber - 1;
         clearCanvas();
-
-        document.querySelectorAll('.page-buttons button').forEach(btn => {
-        btn.classList.remove('active');
-        if (parseInt(btn.textContent) === pageNumber) {
-            btn.classList.add('active');
-        }
-        });
-
-        for (const dot of pages[currentPageIndex]) {
-            processDot(dot);
-        }
+        document.querySelectorAll('.page-thumb').forEach(t => t.classList.remove('active'));
+        const thumb = document.querySelector('.page-thumb[data-page="' + currentPageIndex + '"]');
+        if (thumb) thumb.classList.add('active');
+        for (const dot of pages[currentPageIndex]) processDot(dot);
       }
       
       function getColor(page) {
@@ -711,11 +844,10 @@ app.get('/', (req, res) => {
       
       function switchAutoPageSwitch() {
         autoPageSwitch = !autoPageSwitch;
-        document.querySelectorAll('button').forEach(btn => {
-        if (btn.textContent == "AutoPageSwitch") {
-            btn.style.background = autoPageSwitch ? '#28a745' : '#dc3545';
-        }
-        });
+        const btn = document.getElementById('autoPageSwitchBtn');
+        if (btn) btn.style.background = autoPageSwitch
+          ? 'var(--btn-success)'
+          : 'var(--btn-danger)';
       }
 
       function toggleForce252() {
@@ -734,24 +866,118 @@ app.get('/', (req, res) => {
         force252 = false;
       }
 
-      function clearCurrentPage() {
-        // Локально очищает только текущую страницу (на сервере данные остаются).
-        pages[currentPageIndex] = [];
-        clearCanvas();
-        document.querySelectorAll('.page-buttons button').forEach(btn => {
-          if (parseInt(btn.textContent) === currentPageIndex + 1) {
-            btn.classList.remove('written');
-          }
-        });
-      }
-
       function clearAllGlobal() {
-        // Глобальная очистка: сервер сотрёт allDots и пошлёт всем 'cleared',
-        // обработчик которого почистит локальные структуры и холст.
+        // Глобальная очистка: сервер сотрёт allDots и пошлёт всем 'cleared'.
         wsSend({ type: 'clear_all' });
       }
 
-      // Стартуем WebSocket-соединение (с авто-реконнектом внутри).
+      function clearCurrentPageGlobal() {
+        // Очистка только текущей страницы на сервере и всех дашбордах.
+        wsSend({ type: 'clear_page', page: currentPageIndex + 1 });
+      }
+
+      // ===== Тема (light/dark) =====
+      function toggleTheme() {
+        const dark = document.body.classList.toggle('dark');
+        localStorage.setItem('theme', dark ? 'dark' : 'light');
+        document.getElementById('themeBtn').textContent = dark ? '☀️' : '🌙';
+      }
+      // Применяем сохранённую тему при загрузке.
+      (function applySavedTheme() {
+        const saved = localStorage.getItem('theme');
+        if (saved === 'dark') {
+          document.body.classList.add('dark');
+          document.getElementById('themeBtn').textContent = '☀️';
+        }
+      })();
+
+      // ===== Полноэкранный режим =====
+      function toggleFullscreen() {
+        const isFs = document.body.classList.toggle('fullscreen');
+        // Дать grid'у пересчитаться, потом ресайзим канвас.
+        requestAnimationFrame(() => requestAnimationFrame(resizeCanvas));
+      }
+
+      // ===== Превью страниц =====
+      function buildThumbnails() {
+        const container = document.getElementById('pageThumbs');
+        const clearBtns = container.querySelector('.clear-buttons');
+        // Вставляем 10 превью ПЕРЕД блоком кнопок очистки.
+        for (let i = 0; i < 10; i++) {
+          const thumb = document.createElement('div');
+          thumb.className = 'page-thumb';
+          thumb.dataset.page = String(i);
+          thumb.title = 'Страница ' + (i + 1);
+          thumb.onclick = () => goToPage(i + 1);
+
+          const c = document.createElement('canvas');
+          c.width = 70; c.height = 90;
+          thumb.appendChild(c);
+
+          const badge = document.createElement('div');
+          badge.className = 'num-badge';
+          badge.textContent = String(i + 1);
+          thumb.appendChild(badge);
+
+          container.insertBefore(thumb, clearBtns);
+        }
+        // Стартовая активная страница
+        const first = document.querySelector('.page-thumb[data-page="0"]');
+        if (first) first.classList.add('active');
+      }
+
+      function renderThumbnail(pageIdx) {
+        const thumb = document.querySelector('.page-thumb[data-page="' + pageIdx + '"]');
+        if (!thumb) return;
+        const c = thumb.querySelector('canvas');
+        const tctx = c.getContext('2d');
+        tctx.clearRect(0, 0, c.width, c.height);
+
+        const dots = pages[pageIdx];
+        if (!dots || dots.length === 0) return;
+
+        // Те же mm-размеры, что и в основном холсте.
+        const tScaleX = c.width  / PAGE_WIDTH_MM;
+        const tScaleY = c.height / PAGE_HEIGHT_MM;
+        tctx.lineCap = 'round';
+        tctx.lineJoin = 'round';
+        tctx.strokeStyle = '#222';
+        tctx.lineWidth = 0.6;
+
+        let prevX = null, prevY = null;
+        for (const d of dots) {
+          const x = d.x * tScaleX;
+          const y = d.y * tScaleY;
+          if (d.dotType === 0 || d.dotType === undefined || prevX === null) {
+            prevX = x; prevY = y;
+          } else {
+            tctx.beginPath();
+            tctx.moveTo(prevX, prevY);
+            tctx.lineTo(x, y);
+            tctx.stroke();
+            prevX = x; prevY = y;
+            if (d.dotType === 2) { prevX = null; prevY = null; }
+          }
+        }
+      }
+
+      function renderAllThumbnails() {
+        for (let i = 0; i < 10; i++) renderThumbnail(i);
+      }
+
+      // Перерисовываем превью раз в секунду — этого достаточно глазу.
+      setInterval(renderAllThumbnails, 1000);
+
+      // ===== Pulse-анимация индикатора =====
+      function pulseIndicator(indicator) {
+        indicator.classList.remove('pulse');
+        // force reflow чтобы анимация перезапустилась
+        void indicator.offsetWidth;
+        indicator.classList.add('pulse');
+      }
+
+      // Стартуем UI и WebSocket
+      buildThumbnails();
       connectWS();
     </script>
   </body>
