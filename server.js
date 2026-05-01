@@ -422,10 +422,8 @@ app.get('/', (req, res) => {
 
             setTimeout(() => {
               buffer.sort((a, b) => a.time - b.time);
-
-            // Отрисовываем только если порядок правильный
-            requestAnimationFrame(drawFromBuffer);
-            }, 200);
+              requestAnimationFrame(drawFromBuffer);
+            }, 50);
 
             // Сортируем буфер по time (на случай асинхронного прихода)
             
