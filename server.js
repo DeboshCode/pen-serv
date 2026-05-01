@@ -15,6 +15,9 @@ app.use(express.json({ limit: '10mb' }));
 let allDots = [];
 let force252 = false;
 
+// Ограничение истории — спасает память на длинной дистанции.
+const MAX_DOTS_HISTORY = 50_000;
+
 // POST-эндпоинт для пакета (массива) точек от ручки
 app.post('/api/dots', (req, res) => {
   const dotsArray = req.body;
@@ -27,6 +30,9 @@ app.post('/api/dots', (req, res) => {
     dotsArray.forEach(dot => {
       if (dot && 'x' in dot && 'y' in dot && 'dotType' in dot) {
         allDots.push(dot);
+        if (allDots.length > MAX_DOTS_HISTORY) {
+          allDots = allDots.slice(-MAX_DOTS_HISTORY);
+        }
         validDotsCount++;
         
         // Рассылаем каждую точку всем подключенным клиентам
@@ -401,13 +407,12 @@ app.get('/', (req, res) => {
         function processDot(dot) {
             buffer.push(dot);
 
-            if (realPages.includes(dot.page) === false) {
-                realPages.push(dot.page);
-            }
-            
+            // Прямой маппинг: page N ручки → slot N дашборда (1..10).
+            // Никакой накопленной истории "realPages" — поведение предсказуемо.
             if (autoPageSwitch) {
-                if (realPages.indexOf(dot.page) !== currentPageIndex) {
-                    goToPage(realPages.indexOf(dot.page)+1);
+                const target = Math.max(1, Math.min(10, dot.page || 1));
+                if (target - 1 !== currentPageIndex) {
+                    goToPage(target);
                 }
             }
 
@@ -436,7 +441,7 @@ app.get('/', (req, res) => {
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
-            ctx.strokeStyle = getColor(realPages.indexOf(dot.page));
+            ctx.strokeStyle = getColor((dot.page || 1) - 1);
             ctx.lineWidth = lineWidth;
 
             if (dot.dotType === 0 || dot.dotType === undefined || previousX === null) {
@@ -603,7 +608,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => console.log('Зритель отключён'));
 });
 
-const PORT = 5252;
+const PORT = process.env.PORT || 5252;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 Сервер запущен!`);
   console.log(`Открой в браузере: http://localhost:${PORT}`);
