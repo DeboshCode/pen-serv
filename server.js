@@ -333,8 +333,12 @@ app.get('/', (req, res) => {
       let buffer = [];  // Буфер для точек (чтобы избежать асинхронных скачков)
       let lastTime = 0;  // Для проверки порядка
 
-      // WebSocket + основной индикатор (красный/зелёный)
-      const ws = new WebSocket('ws://' + location.hostname + ':' + location.port);
+      // WebSocket + основной индикатор (красный/зелёный).
+      // Используем wss:// на HTTPS (иначе mixed-content blocking),
+      // ws:// на HTTP. Порт берём из location, чтобы работало и локально, и на Render.
+      const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsHost  = location.host;  // host уже включает порт если он есть
+      const ws = new WebSocket(wsProto + '//' + wsHost);
 
       let force252 = false;
   
